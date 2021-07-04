@@ -15,11 +15,14 @@
 #include "create_swagger.h"
 #include <drogon/DrTemplateBase.h>
 #include <drogon/utils/Utilities.h>
+#include <json/json.h>
 #include <iostream>
 #include <sys/stat.h>
 #include <sys/types.h>
 #ifndef _WIN32
 #include <unistd.h>
+#include <dirent.h>
+#include <dlfcn.h>
 #else
 #include <io.h>
 #include <direct.h>
@@ -27,16 +30,85 @@
 #include <fstream>
 
 using namespace drogon_ctl;
-static void createSwagger(const std::string &path)
+static std::string makeSwaggerDocument(const Json::Value &config)
+{
+    Json::Value ret;
+    ret["swagger"] = "2.0";
+    ret["info"] = config.get("info", {});
+    return ret.toStyledString();
+}
+
+static void createSwaggerHeader(const std::string &path,
+                                const Json::Value &config)
 {
     drogon::HttpViewData data;
-    data["docs_url"] = "/swagger";
+    data["docs_url"] = config.get("docs_url", "/swagger").asString();
     std::ofstream ctlHeader(path + "/SwaggerCtrl.h", std::ofstream::out);
-    std::ofstream ctlSource(path + "/SwaggerCtrl.cc", std::ofstream::out);
     auto templ = DrTemplateBase::newTemplate("swagger_h.csp");
     ctlHeader << templ->genText(data);
-    templ = DrTemplateBase::newTemplate("swagger_cc.csp");
+}
+
+static void createSwaggerSource(const std::string &path,
+                                const Json::Value &config)
+{
+    drogon::HttpViewData data;
+    data["docs_string"] = makeSwaggerDocument(config);
+
+    std::ofstream ctlSource(path + "/SwaggerCtrl.cc", std::ofstream::out);
+    auto templ = DrTemplateBase::newTemplate("swagger_cc.csp");
     ctlSource << templ->genText(data);
+}
+
+static void createSwagger(const std::string &path)
+{
+#ifndef _WIN32
+    DIR *dp;
+    if ((dp = opendir(path.c_str())) == NULL)
+    {
+        std::cerr << "No such file or directory : " << path << std::endl;
+        return;
+    }
+    closedir(dp);
+#endif
+    auto configFile = path + "/swagger.json";
+#ifdef _WIN32
+    if (_access(configFile.c_str(), 0) != 0)
+#else
+    if (access(configFile.c_str(), 0) != 0)
+#endif
+    {
+        std::cerr << "Config file " << configFile << " not found!" << std::endl;
+        exit(1);
+    }
+#ifdef _WIN32
+    if (_access(configFile.c_str(), 04) != 0)
+#else
+    if (access(configFile.c_str(), R_OK) != 0)
+#endif
+    {
+        std::cerr << "No permission to read config file " << configFile
+                  << std::endl;
+        exit(1);
+    }
+
+    std::ifstream infile(configFile.c_str(), std::ifstream::in);
+    if (infile)
+    {
+        Json::Value configJsonRoot;
+        try
+        {
+            infile >> configJsonRoot;
+            createSwaggerHeader(path, configJsonRoot);
+            createSwaggerSource(path, configJsonRoot);
+        }
+        catch (const std::exception &exception)
+        {
+            std::cerr << "Configuration file format error! in " << configFile
+                      << ":" << std::endl;
+            std::cerr << exception.what() << std::endl;
+            exit(1);
+        }
+    }
 }
 void create_swagger::handleCommand(std::vector<std::string> &parameters)
 {
