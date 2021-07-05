@@ -30,11 +30,75 @@
 #include <fstream>
 
 using namespace drogon_ctl;
+
+static void forEachControllerHeaderIn(
+    const std::string &path,
+    const std::function<void(const std::string &)> &cb)
+{
+    DIR *dp;
+    struct dirent *dirp;
+    struct stat st;
+
+    /* open dirent directory */
+    if ((dp = opendir(path.c_str())) == NULL)
+    {
+        // perror("opendir:");
+        LOG_ERROR << "can't open dir,path:" << path;
+        return;
+    }
+
+    /**
+     * read all files in this dir
+     **/
+    while ((dirp = readdir(dp)) != NULL)
+    {
+        /* ignore hidden files */
+        if (dirp->d_name[0] == '.')
+            continue;
+        /* get dirent status */
+        std::string filename = dirp->d_name;
+        if (filename.find(".h") != filename.length() - 2)
+            continue;
+        std::string fullname = path;
+        fullname.append("/").append(filename);
+        if (stat(fullname.c_str(), &st) == -1)
+        {
+            perror("stat");
+            closedir(dp);
+            return;
+        }
+
+        /* if dirent is a directory, find files recursively */
+        if (S_ISDIR(st.st_mode))
+        {
+            forEachControllerHeaderIn(fullname, cb);
+        }
+        else
+        {
+            cb(fullname);
+        }
+    }
+    closedir(dp);
+    return;
+}
+static void parseControllerHeader(const std::string &headerFile,
+                                  Json::Value &docs)
+{
+    std::ifstream infile(headerFile);
+
+    for (std::string buffer; std::getline(infile, buffer);)
+    {
+    }
+}
 static std::string makeSwaggerDocument(const Json::Value &config)
 {
     Json::Value ret;
     ret["swagger"] = "2.0";
     ret["info"] = config.get("info", {});
+    forEachControllerHeaderIn("controllers", [&ret](const std::string &header) {
+        std::cout << "Parsing " << header << " ...\n";
+        parseControllerHeader(header, ret);
+    });
     return ret.toStyledString();
 }
 
